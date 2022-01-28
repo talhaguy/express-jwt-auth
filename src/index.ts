@@ -3,6 +3,7 @@ import bodyParser from 'body-parser';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import { config } from 'dotenv';
+import jwt from 'jsonwebtoken';
 
 config({
   path: `.env.${process.env['NODE_ENV'] ?? 'development'}`,
@@ -63,7 +64,7 @@ const FAKE_USER_DB: Record<string, any> = {
   'a@a.com': {
     username: 'a@a.com',
     password: 'asdfasdf',
-  }
+  },
 };
 const FAKE_BLACKLISTED_TOKENS_DB: Record<string, any> = {};
 
@@ -131,53 +132,120 @@ enum CookieName {
   RefreshToken = 'refreshToken',
 }
 
-const authenticateAccessToken: RequestHandler = (req, res, next) => {
+const authenticateAccessToken: RequestHandler = async (req, res, next) => {
   const token = req.cookies[CookieName.AccessToken];
   if (!token) {
     res.status(401);
     res.json({
       status: 'ERROR',
-      message: 'Unauthorized access',
+      message: 'Unauthorized access. No token found.',
     });
     return;
   }
 
-  // TODO: authenticate token
-
-  const user = JSON.parse(token).user
-  res.locals['user'] = {
-    username: user.username,
-  };
-
-  next();
+  try {
+    const payload = await verifyJWT<{ username: string }>(
+      token,
+      process.env['ACCESS_TOKEN_KEY'] ?? 'secret'
+    );
+    res.locals['user'] = {
+      username: payload.username,
+    };
+    next();
+  } catch (err) {
+    res.status(401);
+    res.json({
+      status: 'ERROR',
+      message: 'Unauthorized access. Verification of token failed.',
+    });
+    return;
+  }
 };
 
-const authenticateRefreshToken: RequestHandler = (req, res, next) => {
+const authenticateRefreshToken: RequestHandler = async (req, res, next) => {
   const token = req.cookies[CookieName.RefreshToken];
   if (!token) {
     res.status(401);
     res.json({
       status: 'ERROR',
-      message: 'Unauthorized access',
+      message: 'Unauthorized access. No token found.',
     });
     return;
   }
 
-  // TODO: authenticate token
-
-  const user = JSON.parse(token).user
-  res.locals['user'] = {
-    username: user.username,
-  };
-
-  next();
+  try {
+    const payload = await verifyJWT<{ username: string }>(
+      token,
+      process.env['REFRESH_TOKEN_KEY'] ?? 'secret'
+    );
+    res.locals['user'] = {
+      username: payload.username,
+    };
+    next();
+  } catch (err) {
+    res.status(401);
+    res.json({
+      status: 'ERROR',
+      message: 'Unauthorized access. Verification of token failed.',
+    });
+    return;
+  }
 };
 
-const addAccessAndRefreshToken: RequestHandler = (req, res, next) => {
-  const now = new Date();
-  const expireAccessToken = new Date(now.getTime() + 15 * 60 * 1000);
-  const expireRefreshToken = new Date(now.getTime() + 120 * 60 * 1000);
+function createJWT(
+  payload: { [key: string]: any },
+  secret: string,
+  expiresSeconds: number
+): Promise<string> {
+  return new Promise((res, rej) => {
+    jwt.sign(
+      payload,
+      secret,
+      {
+        expiresIn: expiresSeconds,
+      },
+      (err, encoded) => {
+        if (err) {
+          rej(err);
+          return;
+        }
 
+        if (!encoded) {
+          rej(new Error('Could not encode'));
+          return;
+        }
+
+        res(encoded);
+      }
+    );
+  });
+}
+
+function verifyJWT<Payload = { [key: string]: any }>(
+  encoded: string,
+  secret: string
+): Promise<Payload> {
+  return new Promise((res, rej) => {
+    jwt.verify(encoded, secret, (err, payload) => {
+      if (err) {
+        rej(err);
+        return;
+      }
+
+      if (!payload || typeof payload === 'string') {
+        rej(new Error('Incorrect payload'));
+        return;
+      }
+
+      res(payload as Payload);
+    });
+  });
+}
+
+const ACCESS_TOKEN_EXPIRE_SECS = 15 * 60
+const REFRESH_TOKEN_EXPIRE_SECS = 120 * 60
+
+const addAccessAndRefreshToken: RequestHandler = async (req, res, next) => {
   const user = res.locals['user'];
   if (!user) {
     res.status(500);
@@ -191,34 +259,52 @@ const addAccessAndRefreshToken: RequestHandler = (req, res, next) => {
   // if there's already tokens, blacklist them
   const oldAccessToken = req.cookies[CookieName.AccessToken];
   if (oldAccessToken) {
-    FAKE_BLACKLISTED_TOKENS_DB[JSON.parse(oldAccessToken).id];
+    FAKE_BLACKLISTED_TOKENS_DB[oldAccessToken];
   }
   const oldRefreshAccessToken = req.cookies[CookieName.RefreshToken];
   if (oldRefreshAccessToken) {
-    FAKE_BLACKLISTED_TOKENS_DB[JSON.parse(oldRefreshAccessToken).id];
+    FAKE_BLACKLISTED_TOKENS_DB[oldRefreshAccessToken];
   }
 
-  // TODO: use real access and refresh token
-  res.cookie(
-    CookieName.AccessToken,
-    JSON.stringify({ id: Date.now() + 'a', user }),
-    {
+  try {
+    const encodedAccessJWT = await createJWT(
+      {
+        username: user.username,
+      },
+      process.env['ACCESS_TOKEN_KEY'] ?? 'secret',
+      ACCESS_TOKEN_EXPIRE_SECS
+    );
+    const encodedRefreshJWT = await createJWT(
+      {
+        username: user.username,
+      },
+      process.env['REFRESH_TOKEN_KEY'] ?? 'secret',
+      REFRESH_TOKEN_EXPIRE_SECS
+    );
+
+    const now = new Date();
+    const expireAccessToken = new Date(now.getTime() + ACCESS_TOKEN_EXPIRE_SECS * 1000);
+    const expireRefreshToken = new Date(now.getTime() + REFRESH_TOKEN_EXPIRE_SECS * 1000);
+
+    res.cookie(CookieName.AccessToken, encodedAccessJWT, {
       expires: expireAccessToken,
       httpOnly: true,
       sameSite: 'lax',
-    }
-  );
-  res.cookie(
-    CookieName.RefreshToken,
-    JSON.stringify({ id: Date.now() + 'r', user }),
-    {
+    });
+    res.cookie(CookieName.RefreshToken, encodedRefreshJWT, {
       expires: expireRefreshToken,
       httpOnly: true,
       sameSite: 'lax',
-    }
-  );
+    });
 
-  next();
+    next();
+  } catch (err) {
+    res.status(500);
+    res.json({
+      status: 'ERROR',
+      message: 'Could not create token(s). Reason: ' + (err as Error).message,
+    });
+  }
 };
 
 app.post(
@@ -259,21 +345,17 @@ app.post(
   }
 );
 
-const apiRouter = express.Router()
+const apiRouter = express.Router();
 
 // TODO: remove sample auth route
-apiRouter.get(
-  '/data',
-  authenticateAccessToken,
-  (_, res) => {
-    res.json({
-      status: 'SUCCESS',
-      message: 'You can access this',
-    });
-  }
-);
+apiRouter.get('/data', authenticateAccessToken, (_, res) => {
+  res.json({
+    status: 'SUCCESS',
+    message: 'You can access this',
+  });
+});
 
-app.use('/api', apiRouter)
+app.use('/api', apiRouter);
 
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
