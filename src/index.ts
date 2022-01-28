@@ -59,7 +59,12 @@ const validateUsernamePasswordForm: RequestHandler = (req, res, next) => {
 };
 
 // TODO: use real db
-const FAKE_USER_DB: Record<string, any> = {};
+const FAKE_USER_DB: Record<string, any> = {
+  'a@a.com': {
+    username: 'a@a.com',
+    password: 'asdfasdf',
+  }
+};
 const FAKE_BLACKLISTED_TOKENS_DB: Record<string, any> = {};
 
 const registerUser: RequestHandler = (req, res, next) => {
@@ -147,26 +152,26 @@ enum CookieName {
 //   next();
 // };
 
-// const authenticateRefreshToken: RequestHandler = (req, res, next) => {
-//   const token = req.cookies[CookieName.RefreshToken];
-//   if (!token) {
-//     res.status(401);
-//     res.json({
-//       status: 'ERROR',
-//       message: 'Unauthorized access',
-//     });
-//     return;
-//   }
+const authenticateRefreshToken: RequestHandler = (req, res, next) => {
+  const token = req.cookies[CookieName.RefreshToken];
+  if (!token) {
+    res.status(401);
+    res.json({
+      status: 'ERROR',
+      message: 'Unauthorized access',
+    });
+    return;
+  }
 
-//   // TODO: authenticate token
+  // TODO: authenticate token
 
-//   const user = JSON.parse(token).user
-//   res.locals['user'] = {
-//     username: user.username,
-//   };
+  const user = JSON.parse(token).user
+  res.locals['user'] = {
+    username: user.username,
+  };
 
-//   next();
-// };
+  next();
+};
 
 const addAccessAndRefreshToken: RequestHandler = (req, res, next) => {
   const now = new Date();
@@ -238,6 +243,18 @@ app.post(
     res.json({
       status: 'SUCCESS',
       message: 'Logged in',
+    });
+  }
+);
+
+app.post(
+  '/refreshToken',
+  authenticateRefreshToken,
+  addAccessAndRefreshToken,
+  (_, res) => {
+    res.json({
+      status: 'SUCCESS',
+      message: 'Refreshed tokens',
     });
   }
 );
