@@ -131,26 +131,26 @@ enum CookieName {
   RefreshToken = 'refreshToken',
 }
 
-// const authenticateAccessToken: RequestHandler = (req, res, next) => {
-//   const token = req.cookies[CookieName.AccessToken];
-//   if (!token) {
-//     res.status(401);
-//     res.json({
-//       status: 'ERROR',
-//       message: 'Unauthorized access',
-//     });
-//     return;
-//   }
+const authenticateAccessToken: RequestHandler = (req, res, next) => {
+  const token = req.cookies[CookieName.AccessToken];
+  if (!token) {
+    res.status(401);
+    res.json({
+      status: 'ERROR',
+      message: 'Unauthorized access',
+    });
+    return;
+  }
 
-//   // TODO: authenticate token
+  // TODO: authenticate token
 
-//   const user = JSON.parse(token).user
-//   res.locals['user'] = {
-//     username: user.username,
-//   };
+  const user = JSON.parse(token).user
+  res.locals['user'] = {
+    username: user.username,
+  };
 
-//   next();
-// };
+  next();
+};
 
 const authenticateRefreshToken: RequestHandler = (req, res, next) => {
   const token = req.cookies[CookieName.RefreshToken];
@@ -258,6 +258,22 @@ app.post(
     });
   }
 );
+
+const apiRouter = express.Router()
+
+// TODO: remove sample auth route
+apiRouter.get(
+  '/data',
+  authenticateAccessToken,
+  (_, res) => {
+    res.json({
+      status: 'SUCCESS',
+      message: 'You can access this',
+    });
+  }
+);
+
+app.use('/api', apiRouter)
 
 app.listen(port, () => {
   console.log(`Example app listening on port ${port}`);
