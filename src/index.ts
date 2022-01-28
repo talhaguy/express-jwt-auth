@@ -4,6 +4,7 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import { config } from 'dotenv';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 
 config({
   path: `.env.${process.env['NODE_ENV'] ?? 'development'}`,
@@ -63,12 +64,12 @@ const validateUsernamePasswordForm: RequestHandler = (req, res, next) => {
 const FAKE_USER_DB: Record<string, any> = {
   'a@a.com': {
     username: 'a@a.com',
-    password: 'asdfasdf',
+    password: bcrypt.hashSync('asdfasdf', 10),
   },
 };
 const FAKE_BLACKLISTED_TOKENS_DB: Record<string, any> = {};
 
-const registerUser: RequestHandler = (req, res, next) => {
+const registerUser: RequestHandler = async (req, res, next) => {
   const username = req.body.username;
   const password = req.body.password;
 
@@ -81,21 +82,31 @@ const registerUser: RequestHandler = (req, res, next) => {
     return;
   }
 
-  // TODO: hash password
+  try {
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-  FAKE_USER_DB[username] = {
-    username,
-    password,
-  };
+    FAKE_USER_DB[username] = {
+      username,
+      hashedPassword,
+    };
+    console.log(FAKE_USER_DB);
 
-  res.locals['user'] = {
-    username,
-  };
+    res.locals['user'] = {
+      username,
+    };
 
-  next();
+    next();
+  } catch (err) {
+    res.status(500);
+    res.json({
+      status: 'ERROR',
+      message: 'Error hashing password',
+    });
+    return;
+  }
 };
 
-const authenticateUser: RequestHandler = (req, res, next) => {
+const authenticateUser: RequestHandler = async (req, res, next) => {
   const username = req.body.username;
   const password = req.body.password;
 
@@ -109,22 +120,29 @@ const authenticateUser: RequestHandler = (req, res, next) => {
     return;
   }
 
-  // TODO: unhash password
-  const userPassword = user.password;
-  if (password !== userPassword) {
-    res.status(401);
+  try {
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      res.status(401);
+      res.json({
+        status: 'ERROR',
+        message: 'Incorrect password',
+      });
+      return;
+    }
+
+    res.locals['user'] = {
+      username,
+    };
+
+    next();
+  } catch (err) {
+    res.status(500);
     res.json({
       status: 'ERROR',
-      message: 'Incorrect password',
+      message: 'Could not check password',
     });
-    return;
   }
-
-  res.locals['user'] = {
-    username,
-  };
-
-  next();
 };
 
 enum CookieName {
@@ -242,8 +260,8 @@ function verifyJWT<Payload = { [key: string]: any }>(
   });
 }
 
-const ACCESS_TOKEN_EXPIRE_SECS = 15 * 60
-const REFRESH_TOKEN_EXPIRE_SECS = 120 * 60
+const ACCESS_TOKEN_EXPIRE_SECS = 15 * 60;
+const REFRESH_TOKEN_EXPIRE_SECS = 120 * 60;
 
 const addAccessAndRefreshToken: RequestHandler = async (req, res, next) => {
   const user = res.locals['user'];
@@ -283,8 +301,12 @@ const addAccessAndRefreshToken: RequestHandler = async (req, res, next) => {
     );
 
     const now = new Date();
-    const expireAccessToken = new Date(now.getTime() + ACCESS_TOKEN_EXPIRE_SECS * 1000);
-    const expireRefreshToken = new Date(now.getTime() + REFRESH_TOKEN_EXPIRE_SECS * 1000);
+    const expireAccessToken = new Date(
+      now.getTime() + ACCESS_TOKEN_EXPIRE_SECS * 1000
+    );
+    const expireRefreshToken = new Date(
+      now.getTime() + REFRESH_TOKEN_EXPIRE_SECS * 1000
+    );
 
     res.cookie(CookieName.AccessToken, encodedAccessJWT, {
       expires: expireAccessToken,
