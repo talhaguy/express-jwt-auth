@@ -35,7 +35,7 @@ const onlyApplicationJson: RequestHandler = (req, res, next) => {
 
 app.use(onlyApplicationJson);
 
-const validateRegistrationForm: RequestHandler = (req, res, next) => {
+const validateUsernamePasswordForm: RequestHandler = (req, res, next) => {
   let error = false;
 
   // TODO: better validation (e.g. no spaces)
@@ -59,13 +59,14 @@ const validateRegistrationForm: RequestHandler = (req, res, next) => {
 };
 
 // TODO: use real db
-const FAKE_DB: Record<string, any> = {};
+const FAKE_USER_DB: Record<string, any> = {};
+const FAKE_BLACKLISTED_TOKENS_DB: Record<string, any> = {};
 
 const registerUser: RequestHandler = (req, res, next) => {
   const username = req.body.username;
   const password = req.body.password;
 
-  if (FAKE_DB[username]) {
+  if (FAKE_USER_DB[username]) {
     res.status(409);
     res.json({
       status: 'ERROR',
@@ -76,43 +77,167 @@ const registerUser: RequestHandler = (req, res, next) => {
 
   // TODO: hash password
 
-  FAKE_DB[username] = {
+  FAKE_USER_DB[username] = {
     username,
     password,
+  };
+
+  res.locals['user'] = {
+    username,
   };
 
   next();
 };
 
-const addAccessAndRefreshToken: RequestHandler = (_, res, next) => {
+const authenticateUser: RequestHandler = (req, res, next) => {
+  const username = req.body.username;
+  const password = req.body.password;
+
+  const user = FAKE_USER_DB[username];
+  if (!user) {
+    res.status(401);
+    res.json({
+      status: 'ERROR',
+      message: 'No user exists',
+    });
+    return;
+  }
+
+  // TODO: unhash password
+  const userPassword = user.password;
+  if (password !== userPassword) {
+    res.status(401);
+    res.json({
+      status: 'ERROR',
+      message: 'Incorrect password',
+    });
+    return;
+  }
+
+  res.locals['user'] = {
+    username,
+  };
+
+  next();
+};
+
+enum CookieName {
+  AccessToken = 'accessToken',
+  RefreshToken = 'refreshToken',
+}
+
+// const authenticateAccessToken: RequestHandler = (req, res, next) => {
+//   const token = req.cookies[CookieName.AccessToken];
+//   if (!token) {
+//     res.status(401);
+//     res.json({
+//       status: 'ERROR',
+//       message: 'Unauthorized access',
+//     });
+//     return;
+//   }
+
+//   // TODO: authenticate token
+
+//   const user = JSON.parse(token).user
+//   res.locals['user'] = {
+//     username: user.username,
+//   };
+
+//   next();
+// };
+
+// const authenticateRefreshToken: RequestHandler = (req, res, next) => {
+//   const token = req.cookies[CookieName.RefreshToken];
+//   if (!token) {
+//     res.status(401);
+//     res.json({
+//       status: 'ERROR',
+//       message: 'Unauthorized access',
+//     });
+//     return;
+//   }
+
+//   // TODO: authenticate token
+
+//   const user = JSON.parse(token).user
+//   res.locals['user'] = {
+//     username: user.username,
+//   };
+
+//   next();
+// };
+
+const addAccessAndRefreshToken: RequestHandler = (req, res, next) => {
   const now = new Date();
   const expireAccessToken = new Date(now.getTime() + 15 * 60 * 1000);
   const expireRefreshToken = new Date(now.getTime() + 120 * 60 * 1000);
 
+  const user = res.locals['user'];
+  if (!user) {
+    res.status(500);
+    res.json({
+      status: 'ERROR',
+      message: 'Could not determine user',
+    });
+    return;
+  }
+
+  // if there's already tokens, blacklist them
+  const oldAccessToken = req.cookies[CookieName.AccessToken];
+  if (oldAccessToken) {
+    FAKE_BLACKLISTED_TOKENS_DB[JSON.parse(oldAccessToken).id];
+  }
+  const oldRefreshAccessToken = req.cookies[CookieName.RefreshToken];
+  if (oldRefreshAccessToken) {
+    FAKE_BLACKLISTED_TOKENS_DB[JSON.parse(oldRefreshAccessToken).id];
+  }
+
   // TODO: use real access and refresh token
-  res.cookie('accessToken', 'asdfasdfasdf', {
-    expires: expireAccessToken,
-    httpOnly: true,
-    sameSite: 'lax',
-  });
-  res.cookie('refreshToken', 'asdfasdfasdf', {
-    expires: expireRefreshToken,
-    httpOnly: true,
-    sameSite: 'lax',
-  });
+  res.cookie(
+    CookieName.AccessToken,
+    JSON.stringify({ id: Date.now() + 'a', user }),
+    {
+      expires: expireAccessToken,
+      httpOnly: true,
+      sameSite: 'lax',
+    }
+  );
+  res.cookie(
+    CookieName.RefreshToken,
+    JSON.stringify({ id: Date.now() + 'r', user }),
+    {
+      expires: expireRefreshToken,
+      httpOnly: true,
+      sameSite: 'lax',
+    }
+  );
 
   next();
 };
 
 app.post(
   '/register',
-  validateRegistrationForm,
+  validateUsernamePasswordForm,
   registerUser,
   addAccessAndRefreshToken,
   (_, res) => {
     res.json({
       status: 'SUCCESS',
       message: 'Registered user',
+    });
+  }
+);
+
+app.post(
+  '/login',
+  validateUsernamePasswordForm,
+  authenticateUser,
+  addAccessAndRefreshToken,
+  (_, res) => {
+    res.json({
+      status: 'SUCCESS',
+      message: 'Logged in',
     });
   }
 );
