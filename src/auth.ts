@@ -16,11 +16,13 @@ interface AuthHandlerFactoryFunc {
   (deps: AuthHandlerDeps): RequestHandler;
 }
 
+const emailRegExp =
+  /^[a-zA-Z0-9.!#$%&’*+/=?^_`{|}~-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*$/;
+
 const validateUsernamePasswordForm: RequestHandler = (req, res, next) => {
   let error = false;
 
-  // TODO: better validation (e.g. no spaces)
-  if (!req.body.username || req.body.username.trim().length === 0) {
+  if (!emailRegExp.test(req.body.username)) {
     error = true;
   }
 

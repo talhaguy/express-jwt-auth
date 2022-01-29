@@ -77,16 +77,16 @@ app.post(
 
 const apiRouter = express.Router();
 
-// TODO: remove sample auth route
+// sample authenticated route
 apiRouter.get('/data', authenticateAccessToken, (_, res) => {
   res.json({
     status: 'SUCCESS',
-    message: 'You can access this',
+    message: 'You can access this since you are authenticated',
   });
 });
 
 app.use('/api', apiRouter);
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`);
+  console.log(`Listening on port ${port}`);
 });
